@@ -161,3 +161,22 @@ curl http://localhost:4321/api/health
 
 ### 5.6 資料庫對照（給需要讀 schema 的人）
 schema 全貌見 `db/migrations/001_init.sql`（含各表註解）。表名為小寫底線（`order_item`、`order_item_revision`、`price_check`…）。
+
+## 6. 部署前置：Adapter 換成 Vercel（2026-10-30，僅本機，未 push、未部署）
+
+**改了什麼**
+- 本機 git：`git init` 後已做第一次 commit `6ac880c`（訊息「收單核心完成：後端API與前端頁面」）；`git status` 與 commit 內容確認不含 `.env`、`.pgdata/`、`node_modules/`、`dist/`（只含 `.env.example`）。`.gitignore` 原本即已排除，無需修正。
+- `npm uninstall @astrojs/node`、`npm install @astrojs/vercel`（現為 `^11.0.17`）；`package.json`／`package-lock.json` 已更新。
+- `astro.config.mjs`：`import node from '@astrojs/node'` → `import vercel from '@astrojs/vercel'`；`adapter: node({ mode: 'standalone' })` → `adapter: vercel()`。其餘（`output: 'server'`、載入 `.env` 的段落）未動。
+- `.gitignore` 追加 `.vercel/`（Vercel adapter 的建置輸出）。
+- 未改 `.env`；未執行任何 vercel 連結／部署指令。
+
+**驗證結果**
+- `npm run build`：通過（adapter 顯示 `@astrojs/vercel`，產出 `.vercel/output`，Complete）。
+- `astro dev` 重啟後 `curl /api/health` → HTTP 200 `{"ok":true,...,"migrations":1}`；驗畢已 `astro dev stop`。
+
+**注意／待確認**
+- `package.json` 的 `npm start`（`node --env-file=.env dist/server/entry.mjs`）是 node adapter 的 standalone 啟動方式，換 Vercel 後已不適用；本機正式模式驗證請改用 `npm run preview` 或 `vercel dev`（後者屬 Vercel 指令，未經授權不執行）。尚未改腳本，待 PM 確認是否移除。
+- 上方第 2 節與第 3 節末項提到 `@astrojs/node`／`npm start` 的敘述已過時，以本節為準。
+- `.gitignore` 與本節、`package*.json`、`astro.config.mjs` 的變更尚未 commit（任務只要求第一次 commit）。
+- 部署時需在 Vercel 設定 `DATABASE_URL` 等環境變數（屬第三級，須 Grant 當次同意）；管理員登入節流在 serverless 多實例下為單機記憶體（見第 4 節第 11 點）。

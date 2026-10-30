@@ -17,7 +17,7 @@
     "start": "node --env-file=.env dist/server/entry.mjs"
   },
   "dependencies": {
-    "@astrojs/node": "^11.1.9",
+    "@astrojs/vercel": "^11.0.17",
     "astro": "^7.4.4",
     "pg": "^8.23.1"
   },
