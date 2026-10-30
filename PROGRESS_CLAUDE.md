@@ -292,3 +292,45 @@ schema 全貌見 `db/migrations/001_init.sql`（含各表註解）。表名為�
   - 本機 dev server（讀正式庫）以 test 帳號臨時 family session（驗後已 `revoked_at`）呼叫 `GET /api/catalog` → 200、10 筆：id 10（Align V-Neck Bra）`tw_ref`＝`{price:null,label:"台灣未售"}`；其餘 9 款價格不變：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280，source／checked_at／note 不變。
 - **⚠ 前端寫死標籤（需 PM 指示，我未動）**：`public/app/main.js`（卡片的「台灣參考價」那段，同檔另有多處 `tw_ref`）寫死 `c.tw_ref?.price==null?'待查':…`，**不讀 `tw_ref.label`**。因此只部署後端時，家人端畫面仍顯示「待查」，要前端改成顯示 `c.tw_ref.label` 才會看到「台灣未售」。該檔屬 Codex 席範圍且有未提交修改，依指示不自行改、也不另寫判斷。`public/app/mock.js` 的示範資料也有 `label:'待查'`，不影響正式站。
 - 邊界：只動台灣價標籤邏輯；未 commit／push／部署。dev server 已停止；臨時驗證腳本已刪除。
+
+## 部署 2026-10-30 晚
+
+### 1. 已完成（附證據）
+- **閘門全過**：`npm run build` 通過；`npx tsc --noEmit` 0 錯誤；`test:unit` 12／12；前端 `src/components/*.test.mjs` 21 通過、1 跳過（需 INVITE_LIVE_TEST 的本機真實 API 項）；`test:api` 32／32（以本機 5433 庫的環境變數執行，未碰正式庫）。
+- **納入項目**：run7 台幣換算顯示、run11 精選圖片 https 放行、run15 台灣未售標籤、run16 邀請失效頁友善化（PROGRESS_CODEX 已有該節且驗證通過，故一併納入）。
+- **commit**：`2fd227a480479ad1072dde46f1d0face8e719de0`；已 `git push origin master`（7be6bbc..2fd227a）。
+- **未納入**：`scripts/`（本機維運腳本）與 `sess-out.txt`（暫存輸出），皆維持未追蹤。
+- **上線時間**：push 約 19:50（本機時間）；19:50:38 health 回 200，19:51:00 正式站 `/app/main.js` 已含新版邀請文案「這個連結已經用過了」，確認新版已部署。
+- **正式站驗證**：
+  - `GET /api/health` → 200（`ok:true, migrations:1`）。
+  - test 帳號臨時 session（`scripts/twref-verify.ts`，1 小時效期，驗後已 `revoked_at`）呼叫 `/api/catalog` → 200、10 筆。9 款台灣價：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280，全部正確；id 10 V-Neck 為 `{price:null,label:"台灣未售"}`。
+  - 正式站家人端 JS：首頁圖片邏輯已改為接受 https 外連（`/^https:\/\//i` 通過即使用原網址），僅非 https 才換 `/images/placeholder.svg`；新版 JS 已在線上。
+
+### 2. 如何啟動或驗證
+- 健康檢查：`https://usshop.vercel.app/api/health`；家人視角用 test 帳號。
+
+### 3. 未完成
+- 尚未做手機／LINE 瀏覽器實機視覺驗收（圖片實際顯示、邀請失效頁畫面）。
+
+### 4. 待確認
+- 舊規格（DEV_SPEC 3.3／3.4／8.2）「圖片自存、不熱連結」與本次 https 外連放行不一致，待 PM 同步規格。
+
+### 5. 給其他席次的交接資訊
+- 本次未改程式內容、未動 Vercel 設定與環境變數；自動部署正常觸發。PROGRESS 本節為 commit 後追加，尚未 commit。
+
+## 型錄第二批：特價款 15 款匯入
+（Grant 2026-10-30 21:04 核准全數匯入；純資料匯入，未改程式、未 commit／push／部署。）
+- **匯入筆數**：15／15，全部 `listing_status='listed'`（無限制詞命中），各自建立 product 並 `is_featured=true`，change_log 已記「匯入」。**新 candidate id＝16–30**（product id 同為 16–30）。腳本 `scripts/import-catalog2.ts`（單一 transaction、以 source_url 防重；本次無重複、無跳過）。
+- **特殊處理**：第 7 筆（id 22）`tw_ref_source` 的佔位字串 `COPY_FROM_CANDIDATE_8` 已改寫為 candidate 8 的原值（`…/wunder-train-…-25%22/prod9750562.html`）。
+- **驗證**（test 帳號臨時 session 讀正式站 `GET /api/catalog`，驗後已 `revoked_at`，臨時驗證腳本已刪）：
+  - (a) 200、總數 25；16–30 全在清單內。✔
+  - (b) 11 筆有台灣價款的 `tw_ref.price` 與 JSON 一致（4480／1980／2280／3480／3480／2680／2680／5280／4780／2680／2680）。✔
+  - (c) Fast and Free 保暖褲(17)、BeCalm 百慕達短褲(19)、Define Track 外套(23)、Silky 高領背心(28) 皆為 `{price:null,label:'台灣未售'}`。✔
+  - (d) id 22 的 `tw_ref_source` 與 id 8 相同、為正式 URL；DB 內 `COPY%` 佔位字串列數＝0。✔
+- **待確認**：JSON 無「定價」欄位，`list_price` 與 `sale_price` 依第一批作法皆寫特價（`price`）；原價（如 US$118）僅在 `promo_conditions` 文字內。若前端需顯示原價／折扣，需 PM 另定欄位來源。merchant 欄依 JSON 寫「lululemon 美國官網」，與第一批的「lululemon 官網」字面不同，product.store 則沿用「lululemon 官網」。
+
+## 台灣未售標籤前端補修（接手）
+（Grant 已核准本批部署；接手自 Codex run18 未完成的本機修改。）
+- **改動**：僅 `public/app/main.js`，`home()` 精選卡片的「台灣參考價」一處（全檔唯一使用 `tw_ref` 的渲染處；item 頁與其他頁面未使用 tw_ref）。`tw_ref.price` 為 null 時顯示 `esc(tw_ref.label || '待查')`，有價時維持原顯示。未動後端、資料庫與其他檔案。
+- **檢查結果**：`node --check main.js` 通過；`npm run build` 通過；`npx tsc --noEmit` 0 錯誤；`test:unit` 12／12；前端 `src/components/*.test.mjs` 21 通過、1 跳過（INVITE_LIVE_TEST 項）；`test:api` 32／32（`.env` 指向 Neon 正式庫，故以 `.env.example` 的本機 5433 庫變數覆蓋執行並起本機 dev server，未碰正式庫）。
+- **commit hash／部署驗證**：見下方追加。
