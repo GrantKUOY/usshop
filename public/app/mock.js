@@ -1,0 +1,30 @@
+// 僅由 ?demo=1 載入。與正式 API 完全隔離，資料只存此分頁 sessionStorage。
+import {ApiError} from './shared.js';
+const stamp=new Date().toISOString();
+const sampleEstimate={id:1,kind:'range',calculated_at:stamp,result:{goods_twd:1600,domestic_shipping_twd:null,shipping_twd:{low:170,high:340},cif_twd:{low:1770,high:1940},total_twd:{low:1770,high:null},known_subtotal_twd:1600,weight_basis:'類別假設重量，非本商品實測',unknowns:['境內運費待查核','關稅率上界待確認'],notes:['此為示範金額，並非實際報價'],disclaimer:'以海關實際認定為準'},scenarios:{exempt:{total_twd:{low:1770,high:1940}},taxable:{total_twd:{low:1859,high:null}}}};
+const catalog=['輕量日常短袖上衣','週末隨行小包','柔軟棉質長襪'].map((name,n)=>({id:n+1,name,merchant:'示範品牌',spec_label:['霧綠 / M','米白 / 單件','灰色 / 三入'][n],sizes_available:['S','M','L'],image_path:'/images/placeholder.svg',currency:'USD',price:[29,39,12][n],price_label:'AI 候選價',checked_at:stamp,price_stale:n===2,can_submit:n!==2,tw_ref:{price:null,label:'待查'}}));
+const makeItem=(id,name,status,spec='霧綠 / M')=>({id,status,status_message:{pending_admin:'等 Grant 核對中',pending_family:'價格更新了，請你確認',rejected:'請修改規格後再送一次',confirmed:'Grant 已確認，準備購買',draft:'還沒送出，先幫你留著'}[status],source:'custom',batch:{id:1,name:'家人好物・示範批次'},content:{name,url:'https://example.com/product',spec,quantity:1,version_no:1,note:''},draft:null,estimate:status==='pending_family'?{...sampleEstimate,awaiting_my_confirmation_of:{estimate_id:1,price_check_id:1}}:null,needs_my_action:status==='pending_family',reject_reason:status==='rejected'?'請補上想要的尺寸。':null,payable:{estimated:null,actual:null,final:null,note:'尚未結算（示範資料）'}});
+const initial={items:[makeItem(1,'輕量日常短袖上衣','pending_family'),makeItem(2,'週末隨行小包','pending_admin'),makeItem(3,'棉質長襪','rejected')],batches:[{id:1,name:'家人好物・示範批次',deadline_at:new Date(Date.now()+7*86400000).toISOString(),status:'open',item_count:3}],keys:{}};
+let state;try{state=JSON.parse(sessionStorage.getItem('usshop-demo'));}catch{}state ||= initial;
+function persist(){sessionStorage.setItem('usshop-demo',JSON.stringify(state));}
+function fail(message,code='invalid_state',status=409){throw new ApiError(message,code,status);}
+const shape=i=>({item_id:i.id,revision_id:i.content?.version_no||1,version_no:i.content?.version_no||1,...i.content,status:i.status,source:i.source,person_name:'家人 A（示範）',person_id:1,batch_id:1,price_check:i.price_check||null,estimate:i.estimate,confirm_blocker:!i.price_check?{code:'no_price_check',message:'請先核准報價'}:null});
+export async function mock(path,method='GET',body={},key){
+ const u=new URL(path,'https://example.test'),p=u.pathname;
+ if(p==='/auth/me')return {person:{id:'demo-family',display_name:'家人 A（示範）',role:'family'}};
+ if(p==='/auth/logout'||p==='/admin/login')return {ok:true};
+ if(p==='/batch'){const batch=state.batches.find(b=>b.status==='open')||null;return {batch,can_submit:!!batch&&Date.parse(batch.deadline_at)>Date.now(),server_time:stamp};}
+ if(p==='/catalog')return {items:catalog};
+ if(p==='/items'&&method==='GET')return {items:state.items};
+ if(p==='/items'&&method==='POST'){const c=catalog.find(c=>c.id===body.candidate_id);const i=makeItem(Date.now(),body.data?.name||c?.name||'','draft');i.draft=body.data||{name:c.name,spec:c.spec_label,quantity:1,url:'https://example.com/product'};i.source=c?'featured':'custom';state.items.push(i);persist();return i;}
+ const match=p.match(/^\/items\/(\d+)(?:\/(.*))?$/);
+ if(match){const i=state.items.find(i=>String(i.id)===match[1]);if(!i)fail('找不到這件商品','not_found',404);if(method==='GET')return i;if(method==='PUT'){i.draft=body.data;persist();return i;}if(match[2]==='submit'){if(state.keys[key])return {replayed:true,item:i};if(!state.batches.some(b=>b.status==='open'&&Date.parse(b.deadline_at)>Date.now()))fail('本期已截止，請保留草稿','batch_closed');i.content={...(body.data||i.draft),version_no:(i.content?.version_no||0)+1};i.draft=null;i.status='pending_admin';i.status_message='等 Grant 核對中';i.reject_reason=null;state.keys[key]=true;persist();return {replayed:false,item:i};}if(match[2]==='family-confirm'){i.status='confirmed';i.status_message='Grant 已確認，準備購買';i.needs_my_action=false;persist();return i;}}
+ if(p==='/admin/pending'){const pending=state.items.filter(i=>['pending_admin','pending_family'].includes(i.status)).map(shape);return {view:u.searchParams.get('view'),groups:pending.length?[{key:'1',person_name:'家人 A（示範）',items:pending,subtotal:{count:pending.length,estimated_total_twd:{low:1770,high:null},unpriced_count:pending.filter(i=>!i.estimate).length}}]:[],confirmed_awaiting_result:state.items.filter(i=>i.status==='confirmed').map(shape)};}
+ if(p==='/admin/items/confirm-batch'){const confirmed=[],failed=[];for(const req of body.items){const i=state.items.find(i=>i.id===req.item_id);if(!i.price_check)failed.push({item_id:i.id,message:'請先核准報價',code:'no_price_check'});else{i.status='confirmed';i.status_message='Grant 已確認，準備購買';confirmed.push(req);}}persist();return {confirmed,failed};}
+ const adm=p.match(/^\/admin\/items\/(\d+)\/(.*)$/);
+ if(adm){const i=state.items.find(i=>String(i.id)===adm[1]);if(!i)fail('找不到品項');const action=adm[2];if(method==='GET')return {price_checks:i.price_check?[i.price_check]:[]};if(action==='price-checks'){i.price_check={id:Date.now(),...body,checked_at:stamp};i.estimate=structuredClone(sampleEstimate);}if(action==='estimates')i.estimate=structuredClone(sampleEstimate);if(action==='confirm'){if(!i.price_check)fail('請先核准報價');i.status='confirmed';i.status_message='Grant 已確認，準備購買';}if(action==='reject'){i.status='rejected';i.status_message='請修改後再送一次';i.reject_reason=body.reason;i.draft={...i.content};}persist();return {ok:true};}
+ if(p==='/admin/batches'){if(method==='GET')return {batches:state.batches};if(state.batches.some(b=>b.status==='open'))fail('已有開放中的批次，請先截止它');state.batches.push({id:Date.now(),...body,status:'open',item_count:0});persist();return {ok:true};}
+ if(p.match(/^\/admin\/batches\/\d+\/close$/)){state.batches.find(b=>String(b.id)===p.split('/')[3]).status='closed';persist();return {ok:true};}
+ if(p==='/admin/line-text')return {texts:[{person_id:1,display_name:'家人 A（示範）',text:'這是示範通知：你的清單已收到，等 Grant 核對後再告訴你。'}]};
+ fail('示範模式尚未提供這個操作','mock_not_implemented',501);
+}

@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+globalThis.location={search:'?demo=1',origin:'http://localhost:4321'};
+Object.defineProperty(globalThis,'navigator',{value:{onLine:true},configurable:true});
+const memory=new Map();globalThis.sessionStorage={getItem:k=>memory.get(k),setItem:(k,v)=>memory.set(k,v)};
+const {esc,range,estimate,safeUrl,api,downloadCsv}=await import('../../public/app/shared.js');
+test('未知金額不轉成零；上界未知明確標示',()=>{assert.equal(range(null),'待查核');assert.match(range({low:1500,high:null}),/上界待確認/);assert.match(estimate({id:1,kind:'pending_check',result:{goods_twd:300,known_subtotal_twd:300,total_twd:null,unknowns:['重量未知']}}),/估算應付：待查價/);});
+test('雙情境、重量依據與固定附註均保留',async()=>{const {items}=await api('/items');const html=estimate(items[0].estimate);for(const text of ['符合免稅條件','可能課稅','以海關實際認定為準','類別假設重量'])assert.ok(html.includes(text));});
+test('外部資料跳脫 HTML 並阻擋 javascript 連結',()=>{assert.equal(esc('<img onerror="x">'),'&lt;img onerror=&quot;x&quot;&gt;');assert.equal(safeUrl('javascript:alert(1)'),'#');});
+test('示範送出冪等，重試同鍵僅建立一個版本',async()=>{const d=await api('/items','POST',{data:{name:'示範測試',spec:'M',quantity:2,url:'https://example.com'}});const a=await api('/items/'+d.id+'/submit','POST',{summary_confirmed:true},'test-same-key');const version=a.item.content.version_no;const b=await api('/items/'+d.id+'/submit','POST',{summary_confirmed:true},'test-same-key');assert.equal(b.replayed,true);assert.equal(b.item.content.version_no,version);assert.equal((await api('/items')).items.filter(i=>i.id===d.id).length,1);});
+test('示範整批確認會逐項列出缺報價原因',async()=>{const r=await api('/admin/items/confirm-batch','POST',{items:[{item_id:2,revision_id:1}]});assert.equal(r.confirmed.length,0);assert.equal(r.failed[0].code,'no_price_check');});
+test('離線禁止 API 寫入，不做背景送出',async()=>{navigator.onLine=false;await assert.rejects(()=>api('/items','POST',{data:{}}),/尚未送出成功/);navigator.onLine=true;});
+test('CSV 跳脫引號與公式前綴',async()=>{let blob;const old=URL.createObjectURL;URL.createObjectURL=b=>{blob=b;return 'blob:test';};globalThis.document={createElement:()=>({click(){}})};downloadCsv([['=1+1','a"b',null]]);assert.match(await blob.text(),/"'=1\+1","a""b","待查核"/);URL.createObjectURL=old;});
+test('已截止只能保留草稿',async()=>{await api('/admin/batches/1/close','POST',{});assert.equal((await api('/batch')).can_submit,false);const d=await api('/items','POST',{data:{name:'下次再買',spec:'M',quantity:1}});await assert.rejects(()=>api('/items/'+d.id+'/submit','POST',{summary_confirmed:true},'closed'),/已截止/);assert.equal((await api('/items/'+d.id)).status,'draft');});
