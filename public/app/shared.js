@@ -15,6 +15,34 @@ export const esc = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;
 export function safeUrl(value){try{const u=new URL(value,location.origin);return ['https:','http:'].includes(u.protocol)?u.href:'#';}catch{return '#';}}
 export const date = value => value ? new Date(value).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}) : '待查核';
 export const money = value => value==null ? '待查核' : 'NT$ '+Number(value).toLocaleString('zh-TW');
+// data 屬性由 Shell 透過既有 estimateParams() 提供；不另設預設匯率。
+function displayFx(){
+ const data=globalThis.document?.body?.dataset||{};
+ const rate=Number(data.fxRate), buffer=Number(data.fxBuffer);
+ return data.fxRate && data.fxBuffer!=null && data.fxBuffer!=='' && Number.isFinite(rate) && rate>0 && Number.isFinite(buffer) && buffer>=0 ? {rate:rate*(1+buffer),buffer} : null;
+}
+export function fxNote(){
+ const fx=displayFx();
+ return `<p class="fx-note"><small>${fx?`匯率 1 USD = NT$${fx.rate.toLocaleString('zh-TW',{maximumFractionDigits:10})}（站內試算匯率，含 ${(fx.buffer*100).toLocaleString('zh-TW',{maximumFractionDigits:6})}% 緩衝），台幣為參考換算，實際金額以結算為準。`:'站內試算匯率尚未設定或暫時無法讀取，台幣換算待查核；實際金額以結算為準。'}</small></p>`;
+}
+export function foreignMoney(value,currency){
+ if(value==null||value===''||!Number.isFinite(Number(value)))return `${esc(currency)} 待查核`;
+ const original=`${esc(currency)} ${esc(value)}`;
+ if(currency!=='USD')return original;
+ const fx=displayFx();
+ return `${original} <small class="twd-equivalent">${fx?'約 NT$'+Math.round(Number(value)*fx.rate).toLocaleString('zh-TW'):'台幣換算待查核'}</small>`;
+}
+// 表單預覽僅讀取欄位，不改輸入值、草稿或送出內容。
+export function bindMoneyPreview(form,amountName,currencyName,target){
+ const render=()=>{
+  const amount=form.elements.namedItem(amountName)?.value;
+  const currency=form.elements.namedItem(currencyName)?.value;
+  target.innerHTML=amount?foreignMoney(amount,currency):'';
+ };
+ form.addEventListener('input',render);
+ form.addEventListener('change',render);
+ render();
+}
 export const range = value => !value || value.low==null ? '待查核' : value.high==null ? `${money(value.low)} 起（上界待確認）` : value.low===value.high ? money(value.low) : `${money(value.low)} – ${money(value.high)}`;
 export function estimate(e){
  if(!e)return '<div class="estimate">待 Grant 查價 · 含運估算待查核</div>';

@@ -1,7 +1,20 @@
 ---
+import { estimateParams } from '../server/settings';
 const { title, page } = Astro.props;
+// 與試算引擎共用設定來源，僅提供顯示，不寫入資料或變更 API。
+let fxRate: number | null = null;
+let fxBuffer: number | null = null;
+if (['home', 'item', 'list', 'admin'].includes(page)) {
+  try {
+    const params = await estimateParams();
+    fxRate = params.fx_rate;
+    fxBuffer = params.fx_buffer;
+  } catch {
+    // 設定不可用時仍可查看頁面，前端明示匯率待查核。
+  }
+}
 ---
 <!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="theme-color" content="#234f43" /><meta name="referrer" content="no-referrer" /><meta name="robots" content="noindex,nofollow" /><title>{title} · 家人好物</title><link rel="manifest" href="/manifest.webmanifest" /><link rel="icon" href="/icons/bag.svg" /><link rel="apple-touch-icon" href="/icons/icon-192.png" /><link rel="stylesheet" href="/app/style.css" /></head>
-<body data-page={page}><a class="skip" href="#main">跳到內容</a><header><a class="brand" href="/"><span class="mark">好</span> 家人好物 <small>一起買，慢慢挑。</small></a><span id="identity"></span></header><nav aria-label="主要導覽"><a href="/" data-nav="home">挑選好物</a><a href="/list" data-nav="list">我的清單</a><a href="/admin" data-nav="admin">管理</a><button id="logout" hidden>離開</button></nav>
+<body data-page={page} data-fx-rate={fxRate} data-fx-buffer={fxBuffer}><a class="skip" href="#main">跳到內容</a><header><a class="brand" href="/"><span class="mark">好</span> 家人好物 <small>一起買，慢慢挑。</small></a><span id="identity"></span></header><nav aria-label="主要導覽"><a href="/" data-nav="home">挑選好物</a><a href="/list" data-nav="list">我的清單</a><a href="/admin" data-nav="admin">管理</a><button id="logout" hidden>離開</button></nav>
 <div id="mode" class="banner" hidden>示範模式 · 僅使用這個分頁的假資料，不會送到 Grant。<a href="/">回到正式模式</a></div><div id="offline" class="banner warning" hidden>目前沒有網路，尚未送出成功。請連線後再按一次送出。</div>
 <main id="main" tabindex="-1"><div id="feedback" role="status" aria-live="polite"></div><div id="app" aria-busy="true"><p class="empty">正在整理好物，請稍候…</p></div></main><footer>家人的小小採購站<span>挑選 → Grant 核對 → 人工購買 → 到貨後結算</span><details><summary>加到手機主畫面</summary><p>iPhone：在 Safari 分享選單選「加入主畫面」。Android：在瀏覽器選單選「安裝應用程式」或「加到主畫面」。送出清單需要網路。</p><button id="install" hidden>加到主畫面</button></details></footer><noscript>請開啟 JavaScript，才能查看與送出清單。</noscript><script type="module" src="/app/main.js"></script></body></html>

@@ -12,7 +12,7 @@
     "astro": "astro",
     "db:migrate": "tsx --env-file=.env db/migrate.ts",
     "db:seed": "tsx --env-file=.env db/seed.ts",
-    "test:unit": "tsx --test tests/estimate.test.ts",
+    "test:unit": "tsx --test tests/estimate.test.ts tests/tw-ref.test.ts",
     "test:api": "tsx --env-file=.env --test tests/api.test.ts",
     "start": "node --env-file=.env dist/server/entry.mjs"
   },

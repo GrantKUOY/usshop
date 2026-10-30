@@ -180,3 +180,115 @@ schema 全貌見 `db/migrations/001_init.sql`（含各表註解）。表名為�
 - 上方第 2 節與第 3 節末項提到 `@astrojs/node`／`npm start` 的敘述已過時，以本節為準。
 - `.gitignore` 與本節、`package*.json`、`astro.config.mjs` 的變更尚未 commit（任務只要求第一次 commit）。
 - 部署時需在 Vercel 設定 `DATABASE_URL` 等環境變數（屬第三級，須 Grant 當次同意）；管理員登入節流在 serverless 多實例下為單機記憶體（見第 4 節第 11 點）。
+
+## Neon 管理員密碼更換
+- 已更新：是
+- 更新時間：2026-10-30 17:07（+08:00）
+- 影響列數：1（更新前 SELECT 確認管理員僅 1 列）
+- 驗證方式：以新雜湊格式（scrypt$salt$hash）從資料庫讀回後比對，通過；未實際登入
+
+## 正式資料整備
+**授權紀錄**：刪除種子資料一事，Grant 本人已於 2026-10-30 18:15 在與 PM 的聊天中明確同意；方案為「先做可靠備份，確認備份成立後才刪除」，備份首選 Neon branch 快照。連線一律用 `.env` 的 `MIGRATE_DATABASE_URL`。邊界：只動 Neon 資料；不改程式；不動本機資料庫；不 commit、不 push、不部署。
+
+**步驟清單**（前一步未驗證成功不進下一步；任一步失敗即停，不繞過、不重試刪除）
+0. 寫入授權紀錄與步驟清單（本節）
+1. 備份：優先建 Neon branch `backup-20261030-before-cleanup`；不行則 (a) 全庫匯出檔 `C:\Users\Grant\usshop-meeting\neon-backup-20261030.*` ＋ (b) 同庫 `backup_20261030` schema 複製；擇一驗證可讀才算成立
+2. 盤點：person 全部（管理員／3 位種子示範家人）、精選商品件數、示範家人各相依表筆數
+3. 刪除 3 位示範家人（子表先刪，管理員不動）
+4. 刪除 5 件種子精選商品
+5. 建立 7 位正式家人：jessica、louise、peggy、bro、sis、aunt、Cynthia
+6. 產生 7 條邀請連結，寫入 `C:\Users\Grant\usshop-meeting\INVITES.txt`（不寫入 PROGRESS／log）
+7. 驗證（1 管理員＋7 家人、示範家人 0、精選 0、/api/health ok:true）並補完本節
+
+**執行紀錄**
+- **步驟1 備份（完成，2026-10-30）**：Neon branch **無法由本機建立**（無 neonctl、無 NEON_API_KEY、無已登入的 Neon 管道；以瀏覽器 OAuth 登入屬第三級須 Grant 當次同意，故未嘗試），依指示改用雙備份：(a) 全庫 JSON 匯出 `C:\Users\Grant\usshop-meeting\neon-backup-20261030.json`，8,905 bytes，17 張表，已重讀 JSON 逐表比對筆數一致；(b) 同庫 `backup_20261030` schema，17 張表以 CREATE TABLE AS 複製，逐表筆數與原表一致（person 4、product 5、candidate 5、batch 1、session 1、setting 1、schema_migrations 1，其餘 0）。兩者皆驗證可讀。註：備份不含約束／索引，僅供資料還原。
+- **步驟2 盤點（完成）**：person 共 4 筆：id1 管理員（admin）；id2 家人甲、id3 家人乙、id4 家人丙（種子示範家人，皆有未用邀請）。精選商品 5 件（id1–5：範例運動長褲、範例保暖外套、範例背包、範例毛帽、範例運動襪三入），各有 1 筆 candidate（product_id 1–5）。3 位示範家人在所有以 person 為外鍵的表筆數皆為 0（session、order_item、order_item_revision、price_check、estimate、shipment、settlement、change_log、setting 皆 0）；商品被 order_item／price_check 引用 0 筆，僅被 candidate 5 筆引用。庫內無 trigger。
+- **步驟3＋4 刪除（完成，單一交易、帶筆數斷言，皆提交）**：person 3 筆（家人甲／乙／丙，id 2–4；其相依表原本即 0 筆，故無子表可刪）；candidate 5 筆（精選商品的子表，source_url 皆 example.com/sample）；product 5 筆。管理員（id1）未動，交易內斷言管理員仍為 1。
+- **步驟5 建立正式家人（完成）**：7 位 person（jessica、louise、peggy、bro、sis、aunt、Cynthia），role=family，disabled_at 為空（可登入）。
+- **步驟6 邀請連結（完成）**：沿用網站 `issueInvite` 同一邏輯（token＝32 bytes base64url、庫內存 sha256、效期 336 小時＝`.env` INVITE_TTL_HOURS，並寫 change_log），以 migrate 連線直接寫庫；因為正式站管理員密碼不經我手，未走 HTTP API。連結已逐行寫入 `C:\Users\Grant\usshop-meeting\INVITES.txt`（7 行，格式「代號 空格 連結」，網址開頭 https://usshop.vercel.app）；連結未寫入 PROGRESS／log。**待確認**：Vercel 正式環境若另設 INVITE_TTL_HOURS，實際效期以庫內 invite_expires_at（現為 14 天）為準。
+- **步驟7 驗證（通過）**：person＝1 admin＋7 family；示範家人 0；精選商品 0（product 總數 0）；`GET https://usshop.vercel.app/api/health` → `{"ok":true,"migrations":1}`。
+- **其他**：`backup_20261030` schema 與 JSON 備份保留未刪；一次性腳本在 `scripts\`（backup-20261030.ts、inv.ts、cleanup.ts、create-family.ts），未 commit；未改程式、未動本機庫、未 push／部署。目前 git 狀態另有先前未 commit 的 PROGRESS_CLAUDE.md 修改。建議確認家人收到連結、登入正常後，再決定何時刪除 backup schema（刪資料須 Grant 當次同意）。
+
+## 精選型錄匯入
+**依據**：`C:\Users\Grant\usshop-meeting\catalog-import.json`（價格為 2026-10-30 查官網定價）。連線一律用 `.env` 的 `MIGRATE_DATABASE_URL`（Neon 正式庫）。邊界：只動 Neon 資料；不改程式；未 commit、未 push、未部署。腳本在 `scripts\import-catalog.ts`、`scripts\verify-catalog.ts`（未 commit）。
+
+- **步驟1 批次改名（完成）**：批次改名沒有專屬 API，直接 `UPDATE batch`（帶 `status='open' and name='示範批次'` 條件，影響 1 列）。SELECT 驗證：id 1「2026 黑五合購」，status `open`（庫內僅此 1 批）。
+- **步驟2 匯入（完成，單一交易）**：10 款寫入 `candidate`＋`product`（照 `/api/admin/candidates` 匯入邏輯與 `change_log`）。欄位對應：`name`＝「name_zh（name_en）」、`source_url`＝url、`image_path`＝image_url、`currency`＝USD、`list_price`＝`sale_price`＝price_usd、`sizes_available`＝`[sizes]`、`checked_at`＝2026-10-30（查價日期欄）、`stock_note`＝「簡介｜顏色：…｜2026-10-30 查價」、商家 `lululemon 官網`（`brand_official`，白名單通過）。10 款皆未命中限制類關鍵字，直接 `listed`。
+  - candidate id／product id（一一對應）：**6／6、7／7、8／8、9／9、10／10、11／11、12／12、13／13、14／14、15／15**（Align 28吋、Align 口袋 25吋、Wunder Train 25吋、Align 背心、Align V領內衣、Define 外套、Swiftly 短袖、Swiftly 長袖、Align 短褲 6吋、Everywhere 腰包）。
+- **步驟3 圖片驗證（外連可用）**：帶 `Referer: https://usshop.vercel.app` 抽測 3 款（Align 28吋、Swiftly 長袖、Everywhere 腰包），皆 HTTP 200、`content-type: image/jpeg`。未被擋，故**不需自架**，未建立 `public\catalog\`。
+- **步驟4 驗證（通過）**：`candidate` 共 10 筆、`listed` 10、欄位完整檢查（product 關聯、連結、圖、價格、尺寸、查價註記）10／10；`product` 共 10 筆且皆 `is_featured`。`GET https://usshop.vercel.app/api/health` → `{"ok":true,"migrations":1}`。
+- **待辦／待確認**：
+  1. 不需為本次匯入部署（資料在庫，網站直接讀）。
+  2. 圖片為外連 lululemon CDN；若日後改網址或擋盜連，再改自架（需 commit＋push＋部署）。
+  3. 資料表無獨立「顏色」「簡介」欄，已併入 `stock_note`；家人端是否要單獨顯示請 PM／Codex 席確認。
+  4. 家人端 `GET /api/catalog` 尚未以家人身分實際打過（正式站邀請連結為單次，未動用）。
+  5. `candidate` 的 `spec_label` 留空（顏色屬選擇性資訊），家人建草稿後需自填規格／顏色。
+
+## 邀請重發：Cynthia（2026-10-30）
+- 原因：Cynthia 的邀請連結被 Grant 測試點開、已兌換（invite_redeemed_at 有值）。
+- 作法：一次性腳本 `scripts/reissue-cynthia.ts`，先把舊邀請標 `invite_revoked_at = now()`，再呼叫專案現成的 `issueInvite()`（同一個 `newToken`／`sha256`、`INVITE_TTL_HOURS=336`），並刪除 Cynthia 名下的 session。只動 Cynthia 一人，未改程式、未 commit／push／部署。
+- 驗證（Neon 正式庫 SELECT）：重發前 redeemed 有值、session 1 筆；重發後 `invite_token_hash` 存在（新雜湊）、`invite_redeemed_at` 為空、`invite_revoked_at` 為空（已由新邀請取代）、`invite_expires_at` 為 2026-11-13、session 0 筆。
+- 檔案：`usshop-meeting\INVITES.txt` 僅 Cynthia 一行更新（仍 7 行）；新連結另存 `INVITE_CYNTHIA_NEW.txt`（一行，與 INVITES 內容一致）。
+
+## 測試帳號（2026-10-30）
+- 已建立：person「test」（id 12，role=family，disabled_at 為空＝可登入），用途是讓 Grant 自己測試家人視角，避免再燒到真家人的單次邀請連結。
+- 作法：一次性腳本 `scripts/create-test.ts`，沿用 `create-family.ts` 同一套邀請邏輯（32 bytes base64url token、庫內存 sha256、效期 336 小時、寫 change_log），連 Neon 正式庫（`MIGRATE_DATABASE_URL`），單一交易。
+- 驗證：person 由 8 筆（1 admin＋7 family）變 9 筆；test 有邀請雜湊、效期至 2026-11-13；其他 7 位家人與管理員未動。
+- 邀請連結單獨存於 `usshop-meeting\INVITE_TEST.txt`（一行）；`INVITES.txt` 未更動。連結未寫入本檔。
+- 邊界：只新增 test 一人；未改程式、未 commit、未 push、未部署。
+
+## 精選圖片修復（2026-10-30）
+**結論：資料與 API 都正確，根因在前端程式；依邊界停手，等 PM 指示。未改程式、未改任何資料、未 commit／push／部署。**
+
+- **步驟1 比對資料（Neon 正式庫，MIGRATE 連線，SELECT）**：圖片欄位只有 `candidate.image_path` 與 `product.image_path`（庫內無其他 image／img 欄）。candidate id 6–15 共 10 款，兩欄皆與 `catalog-import.json` 的 `image_url` **逐字完全相等**（`===`）；長度一致（174／176／79），無截斷；含 `&` 的 9 款原樣保存，無 `&amp;`、`%26`、反斜線等轉義；未存到別的欄位。故無資料可修，**不需 UPDATE**。
+- **步驟2 前端讀法（根因）**：
+  - API：`src/pages/api/catalog.ts`（select `c.*`）→ `src/server/items.ts:197` `candidateView` 回傳 `image_path: c.image_path`，原值照傳。
+  - 卡片：`public/app/main.js:9`，`<img src="${esc(c.image_path?.startsWith('/')&&!c.image_path.startsWith('//')?c.image_path:'/images/placeholder.svg')}">`。**只有以單一 `/` 開頭的站內相對路徑才採用，`https://` 開頭的外部網址一律改顯示 `/images/placeholder.svg`（內容即「示範圖片」，`public/images/placeholder.svg`）**。10 款 image_path 都是 lululemon CDN 的 https 網址，所以全部落到佔位圖。同檔 `main.js:24` 另有 `/catalog` 用法但不涉圖片。
+  - 正式站已部署的 `/app/main.js` 確認含此 `startsWith('/')` 判斷（與本機一致）。
+- **步驟3 修復**：資料層無解——要讓圖顯示，只能（a）改 `main.js:9` 的判斷，允許 `https:` 開頭（例如沿用 `shared.js:15` 的 `safeUrl`，僅放行 http／https）；或（b）把圖片下載自架到 `public/catalog/`，並把 image_path 改成 `/catalog/xxx.jpg`（同樣要 commit＋push＋部署，且 hotlink 現況可用、自架非必要）。兩者皆需改程式或部署，**依指示停下**。**需 PM 指示**：建議由改顯示層的那一席在 `main.js:9` 放行 https 外連圖（img 可加 `referrerpolicy` 視需要；目前帶 Referer 與否皆 200）。若採此案，改完部署後我可重跑下方驗證。另注意 `public/app/mock.js:5` 示範資料用 `/images/placeholder.svg`，不受影響。
+- **步驟4 真實驗證**：腳本 `scripts/diag-images.ts`（未 commit）。以 `MIGRATE_DATABASE_URL` 為 person「test」（id 12）在 `session` 表新增一筆 family session（比照 `createSession`：32 bytes base64url token、庫存 sha256、kind=family、效期 1 小時），帶 `Cookie: usshop_session=…` 呼叫 **正式站 `GET https://usshop.vercel.app/api/catalog`** → HTTP 200、items 10 筆；10 款回傳的 `image_path` 全部與 `catalog-import.json` 的 `image_url` 逐字相等；再以 `Referer: https://usshop.vercel.app` 逐一抓這 10 個網址，**全部 HTTP 200、`content-type: image/jpeg`**。驗證後該 session 已立即 `revoked_at = now()`（腳本 finally 區塊）。token 未印出、未寫入檔案。
+  - 即：API 與圖片來源皆正常，家人端看到佔位圖純粹是 `main.js:9` 的前端判斷所致。**頁面層的最終視覺驗證須待前端修正部署後再做。**
+- **給其他席次**：請改顯示層的席次留意 `public/app/main.js:9`（上述）；`session` 表多一筆已撤銷的 test 驗證 session，無影響。
+
+## 台灣參考價匯入（2026-10-30）
+- **步驟1 欄位確認**：家人端卡片「台灣參考價」＝ `candidate.tw_ref_price`（`src/server/items.ts` `candidateView` → `tw_ref`）。10 款（candidate／product id 6–15）以品名逐款核對，與指示對應全數相符，匯入前 `tw_ref_price` 皆為 null。
+- **步驟2 已寫入**（單一交易，條件含「id＋品名片段相符＋原值為 null」，任一不符即 rollback）：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280（整數 TWD）。
+- **步驟3**：id 10（Align V-Neck Bra，$58）`tw_ref_price` 維持 null；`stock_note` 原值完整保留，尾端加上「・台灣官方店面未售」（現為「…｜2026-10-30 查價・台灣官方店面未售」）。
+- **步驟4 驗證**：
+  - DB 回讀：id 6–15 的 `tw_ref_price` 與上列相符，id 10 為 null，備註尾綴正確。
+  - 正式站 API：以 test 帳號（id 12）臨時 family session（1 小時效期，驗後已 `revoked_at`）呼叫 `GET https://usshop.vercel.app/api/catalog` → 200、10 筆；備註尾綴已出現在 id 10。**但 10 款 `tw_ref` 全部仍回 `{price:null,label:"待查"}`，新價格未顯示。**
+  - **原因**：`candidateView` 只在 `same_spec_basis` 非空且 `tw_ref_price` 有值時才輸出台灣參考價（`items.ts:189`）；10 款的 `same_spec_basis` 目前皆為 null（schema 註解：空＝無法確認同規格，不顯示價差）。另 `tw_ref_source`、`tw_ref_checked_at` 亦為 null。
+- **待確認（需 PM／Grant）**：要讓家人端顯示，需補寫這 9 款的 `same_spec_basis`（同規格依據說明）、並建議補 `tw_ref_source`（例如 lululemon.com.hk zh-tw 店面）與 `tw_ref_checked_at`＝2026-10-30。這些超出本次授權範圍（只動價格與備註尾綴），未動；請指示文字內容與是否同意寫入。同規格是否成立（台灣店面尺寸／色／版本與美國站是否同款）需由查價者確認，我不自行宣稱。
+- 未改程式、未 commit、未 push、未部署。
+
+## 台灣參考價把關補寫（2026-10-30）
+- **步驟1 語意確認**：`items.ts:189` `showDiff = same_spec_basis && tw_ref_price`，兩者皆非空才輸出 `tw_ref`（含 price／source／checked_at）；否則回 `{price:null,label:'待查'}`。三欄皆為自由文字／時間戳，無格式限制（schema 註解：`same_spec_basis` 空＝無法確認同規格）。
+- **步驟2 已寫入**（腳本 `scripts/twref-basis.ts`，未 commit；單一交易，條件含「id＋品名前綴相符＋三欄原值皆 null」，任一不符即 rollback；本次全數通過、無停下）：
+  - id 6–9、11–15（9 款）：`same_spec_basis`＝「lululemon 台灣官方店面（lululemon.com.hk zh-tw）同款同規格產品頁對照」，`tw_ref_source`＝指示所列各款 zh-tw 產品頁 URL，`tw_ref_checked_at`＝2026-10-30（+08:00 午夜，庫內為 2026-10-29T16:00Z）。
+  - id 10（Align V-Neck Bra）：`same_spec_basis`＝「台灣官方店面查無此商品」，`tw_ref_source` 維持 null，`tw_ref_checked_at`＝2026-10-30，`tw_ref_price` 維持 null。
+- **步驟3 驗證**（腳本 `scripts/twref-verify.ts`；test 帳號 id 12 臨時 family session，1 小時效期，驗後已 `revoked_at`）：正式站 `GET /api/catalog` → 200、10 筆。9 款 `tw_ref.price` 正確：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280，且帶出 source、checked_at 與「僅為商品價格比較」備註。id 10 回 `{price:null,label:'待查'}`，無錯誤金額。
+- **註明（V-Neck Bra）**：因程式條件需 `tw_ref_price` 有值，id 10 仍顯示「待查」，無法顯示「台灣未售」；依指示未改程式。若要顯示「未售」需改 `candidateView`（PM 決定）；目前備註尾綴「・台灣官方店面未售」仍在 `stock_note`。
+- **待確認**：id 11 庫內品名為「Define 修身外套」，但指示給的台灣頁 URL slug 為「寬版剪裁外套」（`define-寬版剪裁外套-luon`），字面不同；價格與頁面由查價者於 10-30 實機核對，我未重新驗證，請 PM 確認該頁確為同款。
+- 邊界：只動 candidate 6–15 的三欄；未改程式、未 commit／push／部署。`scripts/` 新增 `twref-list.ts`、`twref-basis.ts`、`twref-verify.ts`（一次性，未 commit）。
+
+## 配對標準修正（2026-10-30）
+- **背景**：Grant 定案台灣參考價配對標準為「同設計款即同款，不比對尺寸、碼數、型號，地區規格差異不影響對照」；run13 寫入的 `same_spec_basis`（「…同款同規格產品頁對照」）與標準不符，需修正。
+- **步驟1**：candidate id 6–9、11–15（9 款，有 `tw_ref_price`）`same_spec_basis` 改為「台灣官方店面同設計款產品頁對照（不比對尺寸／型號）」。
+- **步驟2**：id 10（Align V-Neck Bra）`same_spec_basis` 改為「台灣官方店面查無此設計款商品」。
+- **作法**：一次性腳本 `scripts/twref-basis-fix.ts`（未 commit）；單一交易，條件含「id＋原文字完全相符」，筆數須為 9＋1，否則 rollback；本次一次通過。只 UPDATE `same_spec_basis` 一欄（product 表無此欄）。
+- **步驟3**：`tw_ref_source`、`tw_ref_checked_at`、`tw_ref_price` 未動（SQL 未觸及；回讀 price 與 checked_at＝2026-10-29T16:00Z 如前）。
+- **步驟4 驗證**（`scripts/twref-verify.ts`；test 帳號 id 12 臨時 family session，驗後已 `revoked_at`）：正式站 `GET /api/catalog` → 200、10 筆；9 款 `tw_ref.price` 仍正常輸出：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280；id 10 仍回 `{price:null,label:'待查'}`（程式條件需有價格，與前次相同）。
+- **待確認**：id 11 品名「Define 修身外套」與台灣頁 slug「寬版剪裁外套」字面不同；依新標準以「設計款」認定，仍請查價者確認為同設計款。
+- 邊界：只動 `same_spec_basis` 一欄；未改程式、未 commit／push／部署。
+
+## 台灣未售標籤（2026-10-30，Grant 已核准併入本次部署）
+- **改動檔案**：
+  - `src/server/items.ts` `candidateView`：無台灣價時，`tw_ref_price` 為空且 `same_spec_basis` 含「查無」→ `{price:null,label:'台灣未售'}`；其餘不變（有價出價格、未查出「待查」）。
+  - `tests/tw-ref.test.ts`（新增）：查無→台灣未售、未查價→待查、有價→出價格，共 2 個測試。
+  - `package.json`：`test:unit` 加入 `tests/tw-ref.test.ts`。
+- **驗證**：
+  - `npm run test:unit` 12 通過／0 失敗；`npx tsc --noEmit` 無錯誤；`npm run build` Complete。
+  - 未跑 `tests/api.test.ts`：它會寫入資料，而 `.env` 指向正式庫，故不在正式庫上跑。
+  - 本機 dev server（讀正式庫）以 test 帳號臨時 family session（驗後已 `revoked_at`）呼叫 `GET /api/catalog` → 200、10 筆：id 10（Align V-Neck Bra）`tw_ref`＝`{price:null,label:"台灣未售"}`；其餘 9 款價格不變：6＝3480、7＝4480、8＝3480、9＝2280、11＝5280、12＝2280、13＝2680、14＝1980、15＝1280，source／checked_at／note 不變。
+- **⚠ 前端寫死標籤（需 PM 指示，我未動）**：`public/app/main.js`（卡片的「台灣參考價」那段，同檔另有多處 `tw_ref`）寫死 `c.tw_ref?.price==null?'待查':…`，**不讀 `tw_ref.label`**。因此只部署後端時，家人端畫面仍顯示「待查」，要前端改成顯示 `c.tw_ref.label` 才會看到「台灣未售」。該檔屬 Codex 席範圍且有未提交修改，依指示不自行改、也不另寫判斷。`public/app/mock.js` 的示範資料也有 `label:'待查'`，不影響正式站。
+- 邊界：只動台灣價標籤邏輯；未 commit／push／部署。dev server 已停止；臨時驗證腳本已刪除。

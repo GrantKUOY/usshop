@@ -212,7 +212,7 @@ export async function candidateView(db: Db, c: any, stale: boolean) {
           price: c.tw_ref_price, source: c.tw_ref_source, checked_at: c.tw_ref_checked_at,
           note: '僅為商品價格比較，不代表到手總成本差異',
         }
-      : { price: null, label: '待查' },
+      : { price: null, label: !c.tw_ref_price && c.same_spec_basis?.includes('查無') ? '台灣未售' : '待查' },
     restricted_hit: c.restricted_hit,
   };
 }

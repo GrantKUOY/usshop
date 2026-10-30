@@ -1,4 +1,6 @@
 ---
 import Shell from '../layouts/Shell.astro';
+// 每次開頁重新讀取站內匯率，避免快取舊的參考換算。
+Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 <Shell title="一起挑好物" page="home" />
