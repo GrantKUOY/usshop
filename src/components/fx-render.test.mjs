@@ -9,6 +9,9 @@ class Element {
  get innerHTML(){return this.html||'';}
  setAttribute(name,value){if(name==='aria-busy'&&value==='false')rendered();}
  scrollIntoView(){}
+ querySelector(s){return elements.get(s);}
+ querySelectorAll(){return [];}
+ focus(){}
 }
 for(const id of ['app','feedback','identity','mode','offline','logout','install'])elements.set('#'+id,new Element());
 globalThis.document={body:{dataset:{page:'home',fxRate:'32',fxBuffer:'0.01'}},querySelector:s=>elements.get(s),querySelectorAll:()=>[]};
@@ -20,7 +23,7 @@ await import('../../public/app/main.js');
 await ready;
 
 test('精選卡片原價旁有小字換算及完整註腳',()=>{
- const html=elements.get('#app').innerHTML;
+ const html=elements.get('#catalog-results').innerHTML;
  assert.match(html,/USD 29 <small class="twd-equivalent">約 NT\$937<\/small>/);
  assert.match(html,/匯率 1 USD = NT\$32\.32（站內試算匯率，含 1% 緩衝），台幣為參考換算，實際金額以結算為準。/);
 });

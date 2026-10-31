@@ -109,6 +109,26 @@ describe('邀請連結與權限隔離（驗收 1）', () => {
     assert.equal(again.status, 401);
     assert.equal(again.data.error.code, 'invalid_invite');
   });
+  test('測試帳號（is_test）連結可重複兌換，兩個 session 都有效；一般家人第二次仍 401', async () => {
+    const r = await admin.post('/api/admin/people', { display_name: `測試帳號-${run}` });
+    assert.equal(r.status, 201);
+    await db.query('update person set is_test = true where id = $1', [r.data.id]);
+    const t = tokenOf(r.data.invite_url);
+    const c1 = new Client();
+    const c2 = new Client();
+    assert.equal((await c1.post('/api/auth/redeem', { token: t })).status, 200);
+    assert.equal((await c2.post('/api/auth/redeem', { token: t })).status, 200);
+    assert.notEqual(c1.cookie, c2.cookie);
+    assert.equal((await c1.get('/api/items')).status, 200); // 第一個 session 未被第二次兌換撤銷
+    assert.equal((await c2.get('/api/items')).status, 200);
+    const n = (await db.query('select count(*)::int n from session where person_id=$1 and revoked_at is null', [r.data.id])).rows[0].n;
+    assert.equal(n, 2);
+    // 效期規則不變：過期後測試連結也不可兌換
+    await db.query(`update person set invite_expires_at = now() - interval '1 minute' where id = $1`, [r.data.id]);
+    assert.equal((await new Client().post('/api/auth/redeem', { token: t })).status, 401);
+    // 一般家人（is_test=false）第二次兌換被拒
+    assert.equal((await new Client().post('/api/auth/redeem', { token: tokenOf(B.invite) })).status, 401);
+  });
   test('資料庫只存 token 雜湊，不存明文', async () => {
     const row = (await db.query('select invite_token_hash from person where id=$1', [A.id])).rows[0];
     assert.notEqual(row.invite_token_hash, tokenOf(A.invite));
@@ -380,6 +400,28 @@ describe('AI 精選（驗收 8）', () => {
     const after = (await db.query('select count(*)::int n from candidate where source_url like $1', [`%/t/${run}/%`])).rows[0].n;
     assert.equal(after, before);
   });
+  test('分類欄位：匯入後 /api/catalog 輸出 audience／category；未分類為 null／other；不合法值被拒', async () => {
+    const r = await admin.post('/api/admin/candidates', {
+      candidates: [mk({ k: 'catw', audience: 'women', category: 'leggings' }), mk({ k: 'catnone' })],
+    });
+    assert.equal(r.status, 200);
+    const items = (await A.c.get('/api/catalog')).data.items;
+    const pick = (k: string) => items.find((i: any) => i.source_url === mk({ k }).source_url);
+    assert.equal(pick('catw').audience, 'women');
+    assert.equal(pick('catw').category, 'leggings');
+    assert.equal(pick('catnone').audience, null);
+    assert.equal(pick('catnone').category, 'other');
+    // 再匯入同一筆但未帶分類：沿用原值；帶新值：更新
+    await admin.post('/api/admin/candidates', { candidates: [mk({ k: 'catw' })] });
+    assert.equal((await db.query('select category from candidate where source_url = $1', [mk({ k: 'catw' }).source_url])).rows[0].category, 'leggings');
+    await admin.post('/api/admin/candidates', { candidates: [mk({ k: 'catw', category: 'pants' })] });
+    assert.equal((await db.query('select category from candidate where source_url = $1', [mk({ k: 'catw' }).source_url])).rows[0].category, 'pants');
+    for (const bad of [{ audience: 'kids' }, { category: 'socks' }]) {
+      const x = await admin.post('/api/admin/candidates', { candidates: [mk({ k: 'catbad', ...bad })] });
+      assert.equal(x.status, 400);
+      assert.equal(x.data.error?.code ?? x.data.code, 'invalid_field');
+    }
+  });
   test('下架（含封鎖）後下次匯入不復活，且已送出品項不受影響', async () => {
     const cat = await A.c.get('/api/catalog');
     const target = cat.data.items.find((i: any) => i.source_url === mk({ k: 'ok' }).source_url);
@@ -434,5 +476,86 @@ describe('截止（驗收 3：以伺服器時間；截止後只能存草稿）',
   test('變更紀錄完整：狀態轉換皆留 ChangeLog', async () => {
     const n = (await db.query(`select count(*)::int n from change_log where target_type='order_item' and field='status'`)).rows[0].n;
     assert.ok(n > 10);
+  });
+});
+
+describe('管理員預覽家人頁面（run24）', () => {
+  let cookie = ''; // 管理員 session + 預覽旗標（由伺服器 Set-Cookie 取得）
+  const raw = async (method: string, path: string, body?: unknown, c = cookie) => {
+    const res = await fetch(BASE + path, {
+      method,
+      headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(c ? { cookie: c } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    return { res, data: await res.json().catch(() => null) };
+  };
+
+  test('未啟用預覽：管理員讀家人 API 仍 403（行為不變）、me.preview 為 false', async () => {
+    const login = await fetch(BASE + '/api/admin/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '管理員', password: ADMIN_PW }),
+    });
+    cookie = login.headers.getSetCookie().find((c) => c.startsWith('usshop_session='))!.split(';')[0];
+    assert.equal((await raw('GET', '/api/catalog')).res.status, 403);
+    assert.equal((await raw('GET', '/api/auth/me')).data.preview, false);
+  });
+
+  test('只有管理員能啟用預覽；家人與訪客被拒', async () => {
+    assert.equal((await A.c.post('/api/admin/preview', { on: true })).status, 403);
+    assert.equal((await raw('POST', '/api/admin/preview', { on: true }, '')).res.status, 401);
+  });
+
+  test('啟用預覽：可讀家人 API（同一讀取路徑）、me.preview 為 true，且未建立任何 session', async () => {
+    const before = (await db.query('select count(*)::int n from session')).rows[0].n;
+    const on = await raw('POST', '/api/admin/preview', { on: true });
+    assert.equal(on.res.status, 200);
+    const flag = on.res.headers.getSetCookie().find((c) => c.startsWith('usshop_preview='));
+    assert.ok(flag && /HttpOnly/i.test(flag));
+    assert.ok(!on.res.headers.getSetCookie().some((c) => c.startsWith('usshop_session=')));
+    cookie += '; ' + flag!.split(';')[0];
+    assert.equal((await db.query('select count(*)::int n from session')).rows[0].n, before);
+    for (const p of ['/api/catalog', '/api/batch', '/api/items']) assert.equal((await raw('GET', p)).res.status, 200, p);
+    const me = (await raw('GET', '/api/auth/me')).data;
+    assert.equal(me.preview, true);
+    assert.equal(me.person.role, 'admin'); // 管理員 session 語意不變
+  });
+
+  test('預覽中所有家人寫入 API 回 403 preview_readonly，且資料庫無新增', async () => {
+    const own = await makeSubmitted(A);
+    const items = (await db.query('select count(*)::int n from order_item')).rows[0].n;
+    const logs = (await db.query('select count(*)::int n from change_log')).rows[0].n;
+    const calls: [string, string, unknown][] = [
+      ['POST', '/api/items', draft()],
+      ['PUT', `/api/items/${own}`, draft()],
+      ['DELETE', `/api/items/${own}`, undefined],
+      ['POST', `/api/items/${own}/submit`, { summary_confirmed: true }],
+      ['POST', `/api/items/${own}/family-confirm`, {}],
+    ];
+    for (const [m, p, b] of calls) {
+      const r = await raw(m, p, b);
+      assert.equal(r.res.status, 403, `${m} ${p}`);
+      assert.equal(r.data.error.code, 'preview_readonly', `${m} ${p}`);
+    }
+    assert.equal((await db.query('select count(*)::int n from order_item')).rows[0].n, items);
+    assert.equal((await db.query('select count(*)::int n from change_log')).rows[0].n, logs);
+  });
+
+  test('家人帳號不受影響：照常讀寫，且帶預覽 cookie 也不能越權', async () => {
+    assert.equal((await A.c.get('/api/catalog')).status, 200);
+    assert.equal((await A.c.post('/api/items', draft())).status, 201);
+    assert.equal((await A.c.get('/api/auth/me')).data.preview, false);
+    const sneaky = await A.c.req('POST', '/api/items', draft(), { cookie: A.c.cookie + '; usshop_preview=1' });
+    assert.equal(sneaky.status, 201); // 家人的旗標不產生任何效果
+    assert.equal((await A.c.req('GET', '/api/admin/pending', undefined, { cookie: A.c.cookie + '; usshop_preview=1' })).status, 403);
+  });
+
+  test('退出預覽：旗標清除、家人 API 恢復 403、管理端 API 仍可用', async () => {
+    const off = await raw('POST', '/api/admin/preview', { on: false });
+    assert.equal(off.res.status, 200);
+    cookie = cookie.split(';')[0];
+    assert.equal((await raw('GET', '/api/auth/me')).data.preview, false);
+    assert.equal((await raw('GET', '/api/catalog')).res.status, 403);
+    assert.equal((await raw('GET', '/api/admin/pending?view=person')).res.status, 200);
   });
 });

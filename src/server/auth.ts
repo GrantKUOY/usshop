@@ -114,11 +114,11 @@ export async function revokeInvite(personId: number, operatorId: number): Promis
   });
 }
 
-/** 單次兌換：原子條件更新，同一 token 第二次必失敗 */
+/** 單次兌換：原子條件更新，同一 token 第二次必失敗。測試帳號（is_test）可重複兌換，其餘條件（效期、撤銷、停用）不變 */
 export async function redeemInvite(token: string): Promise<{ id: number; display_name: string } | null> {
   const row = await one(
     `update person set invite_redeemed_at = now()
-      where invite_token_hash = $1 and invite_redeemed_at is null and invite_revoked_at is null
+      where invite_token_hash = $1 and (invite_redeemed_at is null or is_test) and invite_revoked_at is null
         and disabled_at is null and invite_expires_at > now() and role = 'family'
       returning id, display_name`,
     [sha256(token)],

@@ -1,5 +1,6 @@
 import type { APIContext, APIRoute } from 'astro';
 import { authenticate, type AuthInfo } from './auth';
+import { isPreview } from './preview';
 
 export class HttpError extends Error {
   constructor(
@@ -81,7 +82,10 @@ export function api(role: Role, fn: (ctx: APIContext, auth: AuthInfo) => Promise
       if (role !== 'public') {
         const a = await authenticate(ctx);
         if (!a) throw new HttpError(401, 'unauthorized', '請重新用連結進站或重新登入');
-        if (role !== 'any' && a.person.role !== role) throw new HttpError(403, 'forbidden', '沒有權限');
+        if (role === 'family' && a.person.role === 'admin' && isPreview(ctx)) {
+          // 預覽家人頁面：管理員只能讀取，所有寫入在此一律擋下（伺服器端唯一閘門）
+          if (m !== 'GET' && m !== 'HEAD') throw new HttpError(403, 'preview_readonly', '預覽模式只能查看，無法送出或修改');
+        } else if (role !== 'any' && a.person.role !== role) throw new HttpError(403, 'forbidden', '沒有權限');
         auth = a;
       }
       const result = await fn(ctx, auth);

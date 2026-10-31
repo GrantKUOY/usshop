@@ -334,3 +334,223 @@ schema 全貌見 `db/migrations/001_init.sql`（含各表註解）。表名為�
 - **改動**：僅 `public/app/main.js`，`home()` 精選卡片的「台灣參考價」一處（全檔唯一使用 `tw_ref` 的渲染處；item 頁與其他頁面未使用 tw_ref）。`tw_ref.price` 為 null 時顯示 `esc(tw_ref.label || '待查')`，有價時維持原顯示。未動後端、資料庫與其他檔案。
 - **檢查結果**：`node --check main.js` 通過；`npm run build` 通過；`npx tsc --noEmit` 0 錯誤；`test:unit` 12／12；前端 `src/components/*.test.mjs` 21 通過、1 跳過（INVITE_LIVE_TEST 項）；`test:api` 32／32（`.env` 指向 Neon 正式庫，故以 `.env.example` 的本機 5433 庫變數覆蓋執行並起本機 dev server，未碰正式庫）。
 - **commit hash／部署驗證**：見下方追加。
+- **commit**：`5cead8d`（已 push 到 master）。
+- **部署驗證**：輪詢 `https://usshop.vercel.app/app/main.js`，約 30 秒內（第 3 次輪詢）內容已含 `tw_ref?.label`，新邏輯已上線。尚未人工檢視站上「台灣未售」實際畫面（需登入家人帳號），列為待確認。
+- **注意**：本節補記 commit hash 與驗證結果的檔案變更尚未 commit（避免再觸發一次部署）；`scripts/`、`sess-out.txt` 為前手遺留的未追蹤檔，未處理。
+
+## 精選分類功能（本地實作・待部署）
+（Grant 2026-10-30 21:51 核准分類方案。本節為本機實作與測試，**未 commit、未 push、未部署、未對正式 Neon 執行 migration 或任何寫入**；本機驗證時以環境變數覆蓋 `.env`，連本機 5433 庫。）
+
+### 1. 已完成（附證據）
+- **改動檔案**：
+  - `db/migrations/002_candidate_category.sql`（新增）：`candidate` 加 `audience`（women／men／accessories）、`category`（9 個代碼）兩欄，皆可 null，並有 check 約束。
+  - `src/server/taxonomy.ts`（新增）：代碼清單與值域判斷。
+  - `src/server/items.ts`：`candidateView` 輸出 `audience`（null 時 null）、`category`（null 時 `'other'`）。
+  - `src/pages/api/admin/candidates/index.ts`：匯入接受 `audience`／`category`。**值域驗證採既有風格（同 merchant_type）：不在清單內回 400 `invalid_field`，不默默歸 other**；未帶＝新增時存 null、更新既有列時沿用原值（`coalesce`）。另因 `category` 先前被當作自由文字餵給限制類關鍵字比對，現已改為代碼，該比對只看 name／spec_label（代碼本身不含限制詞，行為不變）。
+  - `public/app/catalog-filter.js`（新增）：篩選純函數（對象、品類、搜尋、件數、有商品的品類）。
+  - `public/app/main.js`：首頁精選區加對象 tabs（附件數）、品類 chips（只列目前對象下有商品者）、搜尋框（商品名／spec_label／商家，不分大小寫）、結果件數、空狀態「這個分類目前沒有商品，看看全部吧。」＋清除篩選。卡片內容抽成 `card` 函式，**內容未改**（價格、台灣參考價／label、價格待更新不可送出、挑這件連結皆維持）。tabs／chips 為 `button` 並標 `aria-pressed`；搜尋框有 `<label>`。搜尋框只渲染一次，輸入時不重建，避免打斷中文輸入法組字。
+  - `public/app/style.css`：追加 `.chip`／`.filter-*` 樣式。
+  - `public/app/mock.js`：示範資料補 audience／category（僅 `?demo=1`）。
+  - `src/components/catalog-filter.test.mjs`（新增，6 個單元測試）；`src/components/fx-render.test.mjs`：DOM 替身補 `querySelector`／`querySelectorAll`／`focus`，卡片斷言改讀 `#catalog-results`（因卡片現在渲染在該區塊）。
+  - `tests/api.test.ts`：新增 1 個測試（分類輸出、未分類 null／other、未帶沿用、重匯更新、不合法值 400）。
+  - `scripts/catalog-category-map.json`、`scripts/backfill-catalog-category.ts`（新增，未追蹤目錄 scripts/ 內）。
+- **migration 名稱**：`002_candidate_category.sql`（只在本機 5433 庫套用，本機 `schema_migrations` 現為 2 筆）。
+- **檢查結果**（全部通過）：
+  - `npx tsc --noEmit`：0 錯誤。
+  - `npm run build`：Complete。
+  - `npm run test:unit`：12／12。
+  - 前端 `node --test src/components/*.test.mjs`：27 通過、0 失敗、1 跳過（INVITE_LIVE_TEST 項；先前為 21＋1，新增 6 個）。
+  - `npm run test:api`（本機 5433 庫＋本機 dev server）：33／33（先前 32，新增 1）。
+  - backfill script 在本機庫驗證：以 2 筆臨時資料（含 V-Neck Bra 關鍵字比對、Daydrift 寬腿褲）預覽→`--apply`→重跑，結果為 women/bras、women/pants、重跑顯示「已是目標值」；臨時資料已刪除。
+  - 瀏覽器驗證：以本機 dev server `/?demo=1`（示範資料 3 件）用 headless Chrome 截圖並以 CDP 實際點擊：tabs 切換、件數、品類 chips 隨對象動態變化（男裝只剩「其他」）、包包品類、搜尋「長襪」→1 件、價格待更新卡仍為停用按鈕「價格待更新，暫時不能選」、搜尋無結果顯示空狀態文字；aria-pressed 正確。**「清除篩選」按鈕未在瀏覽器實際點擊驗證**（只靠程式碼檢視，邏輯為重設篩選、清空搜尋框並聚焦）。未用真實 25 件資料與手機實機看過。
+
+### 2. 如何啟動或驗證
+- 本機：`powershell -File db/local-pg.ps1 start`，設定 `.env.example` 的本機 DATABASE_URL／MIGRATE_DATABASE_URL 環境變數後 `npm run db:migrate`、`astro dev --background`；打開 `/?demo=1` 看分類 UI。**注意：本機 `.env` 指向正式庫，務必以環境變數覆蓋，勿直接 `npm run db:migrate`。**
+- backfill 預覽：`npx tsx --env-file=.env scripts/backfill-catalog-category.ts`（預設只預覽並回滾，`--apply` 才寫入）。
+
+### 3. 未完成
+- 正式庫尚無分類資料，正式站目前不會顯示分類（部署前程式碼對 null 友善：對象只在「全部」出現、品類歸「其他」）。
+- 管理端尚無編輯分類的介面（目前只能經匯入 API 或 backfill 設定）；若需要請 PM 另定。
+
+### 4. 待確認
+- 值域不合法時採「拒絕 400」而非「歸 other」（見上），若 PM 想改成歸 other 請告知。
+- 「男裝」目前 0 件，tab 仍顯示「男裝（0）」，點下去顯示空狀態；是否要在 0 件時隱藏該 tab，待 PM／Grant 決定。
+- 首頁卡片資料量大時（目前 25 件）未做分頁／虛擬捲動，維持原樣。
+
+### 5. 給其他席次的交接資訊
+- **25 筆對照表**（鍵＝正式庫 `candidate.name`，取自 usshop-meeting 的 import 檔）：
+  - 第一批（catalog-import.json，名稱格式為 `name_zh（name_en）`，與 import-catalog.ts 寫入格式一致）：
+    1. Align 高腰瑜伽褲 28吋（lululemon Align™ High-Rise Pant 28"）→ women/leggings
+    2. Align 口袋款瑜伽褲 25吋（lululemon Align™ High-Rise Pant with Pockets 25"）→ women/leggings
+    3. Wunder Train 高腰訓練褲 25吋（Wunder Train High-Rise Tight 25"）→ women/leggings
+    4. Align 背心上衣（lululemon Align™ Tank Top *Light Support, A/B Cup）→ women/tops
+    5. **Align V領運動內衣（lululemon Align™ V-Neck Bra *Light Support, A/B Cup）→ women/bras**（鍵值如左；完全比對不到時，以 `V-Neck Bra` 關鍵字、不分大小寫、須唯一命中的 `ilike` 比對）
+    6. Define 修身外套（Define Jacket *Luon）→ women/jackets
+    7. Swiftly Tech 短袖上衣 2.0（Swiftly Tech Short-Sleeve Shirt 2.0 *Hip Length）→ women/tops
+    8. Swiftly Tech 長袖上衣 2.0（Swiftly Tech Long-Sleeve Shirt 2.0 *Waist Length）→ women/tops
+    9. Align 高腰短褲 6吋（lululemon Align™ High-Rise Short 6"）→ women/shorts
+    10. Everywhere Belt Bag 腰包 1L（Everywhere Belt Bag 1L）→ accessories/bags_accessories
+  - 第二批（catalog-import2.json，name 欄原樣）：
+    11. Ace Advantage 網球裙 → women/skirts_dresses
+    12. Fast and Free 保暖緊身褲 28" → women/leggings
+    13. Hotty Hot 短褲 2.5" → women/shorts
+    14. BeCalm 百慕達短褲 → women/shorts
+    15. Shake It Out 跑步短褲 2.5" → women/shorts
+    16. Daydrift 打褶短褲 5" → women/shorts
+    17. Wunder Train 緊身褲 25"（特價色） → women/leggings
+    18. Define Track Jacket 外套 → women/jackets
+    19. Groove 迷你裙 → women/skirts_dresses
+    20. Court Rival 短褲 3" → women/shorts
+    21. Flow Y 連身裙 → women/skirts_dresses
+    22. Daydrift 寬腿褲 → women/pants
+    23. Silky 高領瑜伽背心 → women/tops
+    24. Swiftly Tech 長袖 2.0 齊腰款 → women/tops
+    25. Swiftly Tech 長袖 2.0 短版 → women/tops
+  - 統計：leggings 5、pants 1、shorts 6、skirts_dresses 3、tops 6、jackets 2、bras 1、bags_accessories 1，合計 25，與指示相符。
+  - 第一批 10 筆鍵值是依 import 檔與 import-catalog.ts 的組字規則推得，**未連正式庫核對實際名稱**；上線前 backfill 的預覽模式會列出「找不到」者，不硬改。
+- **API 契約**：`GET /api/catalog` 的每個 item 新增 `audience`（`women|men|accessories|null`）、`category`（9 個代碼之一，未分類為 `other`）。`POST /api/admin/candidates` 的每筆可選帶 `audience`／`category`。
+- **上線時還需要做的步驟（皆待 Grant 另行核准，我未執行）**：
+  1. 對正式 Neon 執行 `002_candidate_category.sql`（`npm run db:migrate`，用 owner 連線）。
+  2. 先預覽再 `--apply` 執行 `scripts/backfill-catalog-category.ts`（正式庫連線），確認 25 筆全數命中、無「找不到」。
+  3. commit／push（含 scripts 對照檔與 backfill script 是否入版控，請 PM 決定；`scripts/` 目前整個未追蹤）。
+  4. 部署後以 test 帳號臨時 session 讀 `/api/catalog` 驗證 25 件皆有 audience／category，並以手機看一次分類 UI。
+  - 順序注意：migration 要先於部署新後端（新後端的 `select c.*` 與匯入 SQL 會用到新欄位）。
+
+## 測試連結應急發放（3 帳號）（2026-10-31，Grant 05:10 核准，正式 Neon 已寫入）
+
+### 1. 已完成
+- 以 `scripts/create-test3.ts`（比照 `create-test.ts`）在正式庫新增 3 位 family 角色 person：`test-phone`、`test-pc`、`test-school`（代號即 display_name）；同名已存在會跳過（本次皆為新建）。每人各產生一條邀請並寫 change_log（invite／issued）。
+- **效期**：沿用家人邀請的固定機制，336 小時（14 天），失效時間 2026-11-13（UTC 21:12）；未另設 60 天（機制固定，依指示用預設）。
+- 連結只寫入 `C:\Users\Grant\usshop-meeting\INVITES_TEST3.txt`（3 行，格式「代號 空格 連結」）；腳本未印出連結，本檔與 log 均無連結。
+- **DB 實查**：person 總數 9 → 12；3 人皆 role=family、可登入、有邀請雜湊、`invite_redeemed_at` 為空（未兌換）、未撤銷。未動其他正式資料。
+
+### 2. 如何驗證
+- 查 `person where display_name in ('test-phone','test-pc','test-school')` 的 invite_redeemed_at 是否仍空；檔案行數 3。
+
+### 3. 未完成／4. 待確認
+- 這 3 條在 B 部署前仍是**單次連結**：第一次點開即用掉，其他裝置需另發。B 上線後將此 3 人設 is_test 才可重複使用（見下節）。
+- 14 天後過期，過期後即使 is_test 也不能兌換（效期規則未改）。
+
+### 5. 交接
+- `scripts/create-test3.ts` 未入版控（`scripts/` 整體仍未追蹤）。
+
+## 測試連結可重複兌換（本地實作・待部署）（2026-10-31）
+
+### 1. 已完成
+- `db/migrations/003_person_is_test.sql`：`person.is_test boolean not null default false`。
+- `src/server/auth.ts` `redeemInvite`：兌換條件由 `invite_redeemed_at is null` 改為 `(invite_redeemed_at is null or is_test)`；撤銷、停用、過期、role 條件不變。兌換流程（`redeem.ts`）本來就只新增 session、不撤銷既有 session（只有重發／撤銷邀請會撤銷），故無需另改分支。一般家人行為不變。
+- `tests/api.test.ts` 新增 1 個測試：is_test 人員連結兌換兩次皆 200、兩個 cookie 不同且皆可呼叫 `/api/items`、DB 中未撤銷 session 恰 2 筆；邀請過期後（is_test）仍 401；一般家人第二次兌換 401。
+- **檢查結果（全以本機 5433 庫與本機 dev server，環境變數覆蓋 `.env`，未碰正式庫）**：`tsc --noEmit` 0 錯誤；`npm run build` Complete；`test:unit` 12／12；前端 `node --test src/components/*.test.mjs` 27 通過、0 失敗、1 跳過；`test:api` 34／34（先前 33，新增 1）。
+
+### 2. 如何驗證
+- 本機：`db/local-pg.ps1 start`，以環境變數指向 5433 後 `npx tsx db/migrate.ts`、`astro dev --background`、`npx tsx --test tests/api.test.ts`。
+
+### 3. 未完成（皆待 PM 取得 Grant 核准後執行，我未執行）
+上線步驟（順序不可顛倒；新後端 SQL 引用 `is_test`，migration 必須先於部署）：
+1. 對正式 Neon 跑 003 migration（owner 連線，`npm run db:migrate`；會同時帶上尚未上線的 002）。
+2. 正式庫執行：`update person set is_test = true where display_name in ('test','test-phone','test-pc','test-school') and role = 'family';`，並確認影響 4 列。
+3. commit／push／部署（工作樹另有未提交的精選分類功能，見上節，commit 範圍請 PM 決定）。
+4. 驗證：同一條 test-phone 連結在兩個瀏覽器各兌換一次，兩邊皆維持登入。
+
+### 4. 待確認
+- `test` 帳號的連結（INVITE_TEST.txt）若已被兌換過，設 is_test 後該連結可再次兌換，但仍受 14 天效期限制，過期需重發（重發會撤銷該人既有 session）。
+- 風險提示：測試連結外流即等同帳號外流（效期內任何人可兌換）；建議僅限測試帳號且不放真實資料。
+
+### 5. 交接
+- 資料庫新欄位 `person.is_test`；API 契約無變動（`/api/auth/redeem` 回應格式不變）。
+
+---
+
+## 精選照片放大顯示＋點擊放大（run23，本地實作・待部署）
+
+### 1. 已完成
+- **改動檔案**（僅前端，增量修改，未動 run21／run22 既有變更；未 commit／push／部署、未動正式 Neon、未跑 migration）：
+  - `public/app/style.css`：`.card img` 改為 `width:100%;aspect-ratio:5/6;height:auto;object-fit:cover;cursor:zoom-in`（保留 background、border-radius）；刪除兩個媒體查詢裡的固定高度（145px／190px）；檔尾新增 `.lightbox` 樣式（fixed inset:0、rgba(0,0,0,.85)、大圖 max 92vw／92vh、object-fit:contain）。
+  - `public/app/main.js`：檔尾（`beforeinstallprompt` 之前）新增 lightbox 區塊。事件委派掛在 `window` 的 click（非 `document`，因既有前端測試的 document stub 沒有 addEventListener），目標為 `.card img`；圖片若在 `a`／`button` 內則不攔截。overlay 由 JS 首次點擊時建立一次並重用；點背景、點大圖、Esc 皆關閉；開啟時 `body.style.overflow='hidden'`，關閉還原。大圖 URL：src 含 `images.lululemon.com` 且含 `wid=` 時 wid 改 1600，否則用原 src。
+  - 商品詳情／item 頁：查證 main.js 全檔僅有一處 `<img`（首頁卡片），故無其他商品圖需套用。
+- **檢查證據**（`.env` 指向正式庫，故以 `.env.example` 本機 5433 庫變數覆蓋，起本機 dev server，未碰正式庫）：
+  - `npx tsc --noEmit` 0 錯誤；`npm run build` Complete。
+  - `test:unit` 12／12；前端 `node --test src/components/*.test.mjs` 27 通過、0 失敗、1 跳過（INVITE_LIVE_TEST 項）；`test:api` 34／34。
+  - 過程中曾因 document stub 造成 8 個前端測試失敗，已改掛 `window` 後全過。
+  - 瀏覽器（headless Chrome＋CDP，`/?demo=1`）：卡片圖實測 275.7×330.8（比例 0.833＝5:6，原為高 180px）、object-fit:cover、cursor:zoom-in；點圖→overlay 顯示（position:fixed、body overflow:hidden）；Esc 關閉並還原 overflow；點背景關閉；點大圖關閉；overlay 全程僅 1 個 DOM；切換對象分頁（catalog-filter 重繪）後點圖仍可開啟；lululemon URL `wid=1280` → 大圖 `wid=1600`（其餘參數保留）。
+  - 截圖：`C:\Users\Grant\usshop-meeting\run23-evidence\01-home.png`、`02-lightbox.png`（示範資料為 placeholder.svg，非真實商品照）。
+
+### 2. 如何啟動或驗證
+- `powershell -File db/local-pg.ps1 start`，以 `.env.example` 變數覆蓋環境後 `astro dev --background`，開 `/?demo=1`，點卡片圖片。
+
+### 3. 未完成
+- 無。尚未用真實 lululemon 圖（需登入家人端正式資料）目視；部署後建議 Grant 以手機實看。
+
+### 4. 待確認
+- 卡片改 `cover` 會裁切少量上下邊（原圖 5:6，與框同比例，正常情況近乎不裁）；若來源圖比例不同才會裁切，請 PM 確認是否可接受。
+- 手機上 lightbox 不含雙指縮放以外的額外功能（瀏覽器原生縮放可用），未加關閉按鈕（點任意處即關）。
+
+### 5. 給 PM 的契約摘要
+- 無 API／資料庫變動。前端行為：`.card img` 點擊開全螢幕大圖（lululemon 圖 wid→1600）；Esc／點擊關閉；包在連結或按鈕內的圖不攔截。本包尚未提交，待 PM 指示 commit／部署（第一級，需授權）。
+
+---
+
+## 管理員預覽家人頁面（run24・本機實作）
+
+（DEPLOY_BACKLOG 第 4 項。**僅本機實作：未 commit、未 push、未部署、未碰正式 Neon、未跑任何 migration（無 schema 變動）**；驗證以 `.env.example` 的本機 5433 庫變數覆蓋 `.env`，`/api/health` 回報 `migrations: 3`＝本機庫。）
+
+### 1. 已完成
+
+**機制與理由**
+- 採「獨立旗標 cookie」：`usshop_preview=1`（HttpOnly、SameSite=Lax、Path=/、12 小時、https 時加 Secure）。只有管理員可經新端點 `POST /api/admin/preview {on:true|false}` 設定／清除。參考既有 demo 旗標（`?demo=1`）的「前端旗標」思路，但 demo 是純前端假資料，預覽要讀真實資料，故旗標必須由伺服器認得。
+- **不建立 session、不改管理員 session 語意**：旗標不是身分，只是「顯示家人視角」的意圖；`/api/auth/me` 仍回 `person.role === 'admin'`，另加欄位 `preview`（僅管理員且帶旗標時為 true）。無 DB 變更、無 migration。
+- 為什麼不選「模擬家人 session」：會違反需求 4，且會產生可寫入的家人身分。為什麼不選獨立 `/preview` 路由：需複製頁面與 API，改動大、且與家人頁面可能走樣；現方案家人頁面與 API 原封重用。
+
+**讀取路徑**：預覽中管理員用同一批家人 API（`/api/batch`、`/api/catalog`、`/api/items`、`/api/items/:id`）與同一支前端 `main.js`，資料即真實精選與批次。`/api/items` 以管理員自己的 person_id 查詢，故「我的清單」為空（管理員本身沒有品項；不冒用任何家人的清單，避免洩漏家人個資）。
+
+**寫入阻擋實作位置（伺服器端單一閘門）**：`src/server/http.ts` 的 `api()` 包裝器。role 為 `family` 的路由遇到「管理員身分＋預覽旗標」時：GET／HEAD 放行；其他方法一律 `403 preview_readonly`。所有家人寫入 API（POST/PUT/DELETE `/api/items*`、`submit`、`family-confirm`）都經此包裝，在進入任何 handler／資料庫之前就擋下。沒有旗標的管理員仍是原本的 `403 forbidden`（行為不變）。前端另外鎖定：`/item` 表單與按鈕 disabled、「確認要買」按鈕不顯示（僅輔助，防線在伺服器）。
+
+**前端**
+- `Shell.astro`：新增 `#preview-bar` 橫幅（預覽中標示、說明、「退出預覽，回到管理端」按鈕）與導覽列的「預覽家人頁面」按鈕（`#preview-enter`，僅管理員且非預覽、非 demo 時顯示）。
+- `main.js`：`/auth/me` 帶 `preview` 時顯示橫幅、不再把管理員導去 `/admin`；進入按鈕→POST on→回 `/`；退出按鈕→POST off→前往 `/admin`；管理員頁（`/admin`、`/admin/batches`）載入時若殘留旗標會自動清除（避免之後開 `/` 意外進入預覽）。
+- `style.css`：`.preview-bar`（sticky top、橘色、z-index 60）——捲動時持續可見。
+- 登出（`/api/auth/logout`）同時清除預覽旗標。
+
+### 改動檔案清單（僅 run24 增量，保留 run21／22／23 變更）
+- 新增：`src/server/preview.ts`（cookie 名稱、`isPreview`、`setPreview`）、`src/pages/api/admin/preview.ts`
+- 修改：`src/server/http.ts`、`src/pages/api/auth/me.ts`、`src/pages/api/auth/logout.ts`、`src/layouts/Shell.astro`、`public/app/main.js`、`public/app/style.css`（檔尾追加）、`tests/api.test.ts`（檔尾新增 6 個測試的 describe）、`PROGRESS_CLAUDE.md`
+
+### 檢查結果（本機 5433 庫＋本機 dev server）
+- `npx tsc --noEmit`：0 錯誤
+- `npm run build`：Complete（Server built）
+- `npm run test:unit`：12／12 通過
+- 前端 `node --test src/components/*.test.mjs`：28 項，27 通過、0 失敗、1 跳過（INVITE_LIVE_TEST 項，與前幾棒相同）
+- `test:api`：40／40 通過（先前 34，新增 6 個預覽測試）
+
+### 實測證據
+- **API 層（tests/api.test.ts「管理員預覽家人頁面」6 項）**：未啟用時管理員讀 `/api/catalog` 仍 403；家人與訪客無法呼叫 `/api/admin/preview`（403／401）；啟用後回 Set-Cookie `usshop_preview`（HttpOnly）且**不含** `usshop_session`、`session` 表筆數不變；預覽中 `/api/catalog`、`/api/batch`、`/api/items` 為 200，`me.preview=true` 且 `person.role` 仍為 admin；POST `/api/items`、PUT、DELETE、`submit`、`family-confirm` 全部 `403 preview_readonly`，且 `order_item`、`change_log` 筆數不變；家人帳號讀寫照常，家人自己帶 `usshop_preview=1` 也無效果（且仍不能呼叫管理 API）；退出後旗標清除、家人 API 恢復 403、管理 API 仍可用。
+- **headless Chrome（CDP，腳本在 `%TEMP%\run24-cdp.mjs`，不在 repo 內）**，結果記錄 `C:\Users\Grant\usshop-meeting\run24-evidence\cdp-results.json`，截圖同資料夾：
+  - (a) 管理員登入→`/admin` 出現「預覽家人頁面」（`01-admin-entry.png`）→點擊進 `/`，橫幅「預覽中」可見、家人首頁標題與 22 張精選卡片（真實本機資料，`02-preview-home.png`）；捲動 1500px 後橫幅 top=0 仍可見（`03-…sticky.png`）；`/list` 同樣有橫幅（`04`）。
+  - (b) `/item` 表單鎖定（`05`）；瀏覽器內直打 POST `/api/items`、PUT `/api/items/1`、POST `…/submit` 皆 403 `preview_readonly`；GET `/api/catalog` 200。
+  - (c) 點「退出預覽」→導到 `/admin`，橫幅消失、入口按鈕回來（`06`）；退出後 GET `/api/catalog` 403 forbidden；再開 `/` 導回 `/admin`。
+  - (d) 新建家人（本機庫）兌換邀請後：首頁無橫幅、無預覽按鈕、22 張卡片，`POST /api/items` 201，`/item` 表單可編輯（`07-family-home-no-bar.png`）；未登入訪客首頁無橫幅、無按鈕、仍顯示歡迎頁。
+
+### 2. 如何啟動或驗證
+```
+powershell -File db/local-pg.ps1 start
+# 以 .env.example 的 5433 變數覆蓋環境後：
+astro dev --background
+# 管理員登入 /admin/login（帳號「管理員」，密碼見 .env.example 的 SEED_ADMIN_PASSWORD）→ 導覽列「預覽家人頁面」
+npx tsx --test tests/api.test.ts
+```
+
+### 3. 未完成／已知缺口與風險
+- 預覽中管理員的「我的清單」恆為空（見上，刻意不顯示任何家人的清單）；若 Grant 想預覽「某位家人的清單內容」，需另案設計（可能牽涉個資顯示與稽核），本包未做。
+- 預覽旗標只擋「家人角色路由」的寫入；管理端 API 在預覽旗標存在時仍可用（旗標不影響管理端）。因管理員頁載入會自動清旗標，且預覽 UI 不提供管理操作，視為可接受；若 PM 要求「預覽期間連管理 API 也禁寫」需另加規則。
+- 「管理員頁載入時自動清除殘留旗標」的分支已寫入但**未做瀏覽器實測**（正常退出路徑與 API 測試已涵蓋）。
+- 預覽旗標 12 小時自動失效；`usshop_preview` 與 session 分離，管理員 session 過期時旗標單獨存在無作用（`/api/auth/me` 401）。
+- 本機測試庫因測試新增了測試家人與草稿（僅本機）。未在正式站驗證；上線後建議 Grant 以真實管理員帳號實看一次。
+
+### 4. 待確認
+- 預覽的「離開」鈕（登出）仍顯示於預覽畫面，登出會同時清旗標；是否要在預覽中隱藏，請 PM 決定。
+
+### 5. 給其他席次／PM 的契約摘要
+- 新 API：`POST /api/admin/preview {on:boolean}`（admin only，Origin 檢查同其他 POST）→ `{ok, preview}`。
+- `GET /api/auth/me` 新增 `preview:boolean`（向下相容）。
+- 新錯誤碼：`403 preview_readonly`（管理員預覽中呼叫家人寫入 API）。
+- 無資料庫／schema 變動；部署屬第一級／已授權範圍外，等 PM 指示。

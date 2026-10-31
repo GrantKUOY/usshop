@@ -193,6 +193,8 @@ export async function candidateView(db: Db, c: any, stale: boolean) {
     merchant: c.merchant,
     source_url: c.source_url,
     spec_label: c.spec_label,
+    audience: c.audience ?? null,
+    category: c.category ?? 'other',
     sizes_available: c.sizes_available,
     image_path: c.image_path,
     currency: c.currency,
